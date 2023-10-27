@@ -1,0 +1,112 @@
+# Define an array of folder paths and their corresponding install arguments
+# Edit the following to modify for each folder
+$foldersToInstall = @(
+    @{Path = "packages\XXX"; Arguments = "/install /quiet /norestart"}
+    @{Path = "packages\XXX"; Arguments = "/S"}
+    # Add more folder and argument pairs as needed
+)
+
+# Network Drive Information (update with your network share details)
+$networkDriveLetter = "Z"
+$NetworkSharePath = "\\IP_ADDRESS\installers"
+
+# Map the network drive
+if (Get-PSDrive -Name 'Z' -ErrorAction SilentlyContinue) {
+    Write-Error "Drive letter Z is already in use or unavailable. Please modify the script with a different letter or disconnect the Z and try again."
+} else {
+    Write-Host ""
+
+    # Attach the network share using SMB
+    net use Z: $NetworkSharePath /user:USERNAME * /persistent:yes
+
+    # Test if the network share is mapped
+    if (Get-PSDrive -Name 'Z' -ErrorAction SilentlyContinue) {
+        Write-Host "Mapped network drive Z to $NetworkSharePath"
+    } else {
+        Write-Error "Failed to map the network drive."
+    }
+}
+
+# Loop through each folder and install
+foreach ($folder in $foldersToInstall) {
+    $installationSubfolder = $folder.Path
+    $installArguments = $folder.Arguments
+
+    # Build the full network path based on the variable
+    $networkPath = "Z:\$installationSubfolder"
+
+    # Set the default working directory to the network folder
+    Set-Location -Path $networkPath
+
+    # Define the system's temporary folder
+    $systemTempFolder = [System.IO.Path]::Combine([System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Windows), "Temp")
+
+    # Create a unique temporary folder for each installation
+    $localTempFolder = [System.IO.Path]::Combine($systemTempFolder, "InstallationTemp\$($folder.Path.Replace('\', '_'))")
+
+    # Create the temporary folder if it doesn't exist
+    if (-not (Test-Path $localTempFolder)) {
+        New-Item -ItemType Directory -Path $localTempFolder
+    }
+
+    # Define source and destination paths
+    $sourcePath = "Z:\$installationSubfolder\"
+    $destinationPath = $localTempFolder
+
+    # Define the ROBOCOPY arguments
+    $arguments = "$sourcePath $destinationPath /S /Z /R:5 /W:5 /LOG:D:\Robocopy.log /IS"
+
+    # Displaying information to the user
+    Write-Host ""
+    Write-Host "Copying files from $sourcePath to $destinationPath"
+
+    # Run the ROBOCOPY command and check for errors
+    $process = Start-Process -FilePath 'ROBOCOPY' -ArgumentList $arguments -NoNewWindow -PassThru -Wait
+    $robocopyExitCode = $process.ExitCode
+
+    if ($robocopyExitCode -ge 8) {
+    # Errors, opening the log file
+    Write-Host "Error copying files, check log at D:\Robocopy.log for more details."
+    Start-Process -FilePath "D:\Robocopy.log"    
+    } else { 
+    # No errors, deleting the log file
+    Remove-Item -Path "D:\Robocopy.log" -ErrorAction SilentlyContinue
+    }
+
+    # Displaying information to user
+    Write-Host ""
+    Write-Host "Installing all exe's from $sourcePath, this will take a while."
+
+    # Execute all .exe files in the temporary folder with arguments, one at a time and in order
+    $exeFiles = Get-ChildItem -Path $destinationPath -Filter *.exe
+    foreach ($exeFile in $exeFiles) {
+        Start-Process -FilePath $exeFile.FullName -ArgumentList "$installArguments" -Wait
+    }
+
+    # Displaying information to user
+    Write-Host "Installations complete for folder: $installationSubfolder"
+
+    # Clear the temporary folder
+    Remove-Item -Path $localTempFolder -Recurse -Force
+}
+
+# Disconnect the network drive
+if (Test-Path "${networkDriveLetter}:") {
+    net use $networkDriveLetter`: /delete /y
+    if (-not (Test-Path "${networkDriveLetter}:")) {
+        Write-Host "Network drive $networkDriveLetter disconnected successfully."
+    } else {
+        Write-Host "Failed to disconnect network drive $networkDriveLetter."
+    }
+} else {
+    Write-Host "Network drive $networkDriveLetter is not mapped."
+}
+
+# Displaying information to user
+Write-Host ""
+Write-Host "This computer will reboot in 1 minute."
+
+# Wait for 60 seconds
+Start-Sleep -Seconds 60
+
+Restart-Computer -Force
