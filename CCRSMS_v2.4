@@ -1,14 +1,15 @@
 # Define an array of folder paths and their corresponding install arguments
 # Edit the following to modify for each folder
 $foldersToInstall = @(
-    @{Path = "packages\XXX"; Arguments = "/install /quiet /norestart"}
-    @{Path = "packages\XXX"; Arguments = "/S"}
+    @{Path = "PATH\TO\FOLDER"; Arguments = "/install /quiet /norestart"}
+    @{Path = "PATH\TO\FOLDER"; Arguments = "/S"}
+    @{Path = "PATH\TO\FOLDER"; Arguments = "ALLUSERS=1 /norestart /qn"}
     # Add more folder and argument pairs as needed
 )
 
 # Network Drive Information (update with your network share details)
 $networkDriveLetter = "Z"
-$NetworkSharePath = "\\IP_ADDRESS\installers"
+$NetworkSharePath = "\\IPADDRESS\installers"
 
 # Map the network drive
 if (Get-PSDrive -Name 'Z' -ErrorAction SilentlyContinue) {
@@ -17,7 +18,7 @@ if (Get-PSDrive -Name 'Z' -ErrorAction SilentlyContinue) {
     Write-Host ""
 
     # Attach the network share using SMB
-    net use Z: $NetworkSharePath /user:USERNAME * /persistent:yes
+    net use Z: $NetworkSharePath /user:installer * /persistent:yes
 
     # Test if the network share is mapped
     if (Get-PSDrive -Name 'Z' -ErrorAction SilentlyContinue) {
@@ -52,35 +53,30 @@ foreach ($folder in $foldersToInstall) {
     # Define source and destination paths
     $sourcePath = "Z:\$installationSubfolder\"
     $destinationPath = $localTempFolder
-
-    # Define the ROBOCOPY arguments
-    $arguments = "$sourcePath $destinationPath /S /Z /R:5 /W:5 /LOG:D:\Robocopy.log /IS"
-
+    
     # Displaying information to the user
     Write-Host ""
     Write-Host "Copying files from $sourcePath to $destinationPath"
 
-    # Run the ROBOCOPY command and check for errors
-    $process = Start-Process -FilePath 'ROBOCOPY' -ArgumentList $arguments -NoNewWindow -PassThru -Wait
-    $robocopyExitCode = $process.ExitCode
-
-    if ($robocopyExitCode -ge 8) {
-    # Errors, opening the log file
-    Write-Host "Error copying files, check log at D:\Robocopy.log for more details."
-    Start-Process -FilePath "D:\Robocopy.log"    
-    } else { 
-    # No errors, deleting the log file
-    Remove-Item -Path "D:\Robocopy.log" -ErrorAction SilentlyContinue
-    }
+    # Copy files and directories from source to destination
+    Copy-Item -Path $sourcePath\* -Destination $destinationPath -Recurse -Force
 
     # Displaying information to user
     Write-Host ""
-    Write-Host "Installing all exe's from $sourcePath, this will take a while."
+    Write-Host "Installing all exe's and .msi's from $sourcePath, this will take a while."
 
     # Execute all .exe files in the temporary folder with arguments, one at a time and in order
     $exeFiles = Get-ChildItem -Path $destinationPath -Filter *.exe
     foreach ($exeFile in $exeFiles) {
         Start-Process -FilePath $exeFile.FullName -ArgumentList "$installArguments" -Wait
+    }
+
+    # Execute all .msi files in the temporary folder with arguments, one at a time and in order
+    $msiFiles = Get-ChildItem -Path $destinationPath -Filter *.msi
+    foreach ($msiFile in $msiFiles) {
+        $msiPath = $msiFile.FullName
+        $arguments = "/i ""$msiPath"" $installArguments"
+        Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait
     }
 
     # Displaying information to user
